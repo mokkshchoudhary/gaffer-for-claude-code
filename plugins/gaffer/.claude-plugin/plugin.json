@@ -2,8 +2,8 @@
   "name": "gaffer",
   "version": "0.1.0",
   "description": "Claude plans and checks. Codex does the work. Per-project manager mode for Claude Code that hands token-heavy work to Codex and verifies it.",
-  "author": { "name": "Akshay" },
-  "repository": "https://github.com/YOUR_GITHUB_USER/gaffer-for-claude-code",
+  "author": { "name": "Moksh Choudhary" },
+  "repository": "https://github.com/mokkshchoudhary/gaffer-for-claude-code",
   "license": "MIT",
   "keywords": ["codex", "delegation", "orchestration", "subagents", "token-savings"]
 }

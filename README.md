@@ -43,11 +43,11 @@ Works on Windows, macOS and Linux.
 In your terminal:
 
 ```
-claude plugin marketplace add YOUR_GITHUB_USER/gaffer-for-claude-code
+claude plugin marketplace add mokkshchoudhary/gaffer-for-claude-code
 claude plugin install gaffer@gaffer
 ```
 
-Or inside Claude Code: `/plugin marketplace add YOUR_GITHUB_USER/gaffer-for-claude-code`, then `/plugin install gaffer@gaffer`.
+Or inside Claude Code: `/plugin marketplace add mokkshchoudhary/gaffer-for-claude-code`, then `/plugin install gaffer@gaffer`.
 
 **Turn on updates:** in Claude Code, open `/plugin`, go to **Marketplaces**, select **gaffer**, then choose **Enable auto-update**. Without this you stay on the version you installed.
 

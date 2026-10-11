@@ -1,7 +1,7 @@
 {
   "name": "gaffer",
   "description": "gaffer: Claude as the manager, Codex as the worker",
-  "owner": { "name": "Akshay" },
+  "owner": { "name": "Moksh Choudhary" },
   "plugins": [
     {
       "name": "gaffer",
