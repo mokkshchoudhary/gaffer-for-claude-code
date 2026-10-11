@@ -116,7 +116,12 @@ test('check reports missing login with fix instructions; smoke passes on a worki
   assert.equal(bad.code, 1);
   assert.match(bad.out, /NOT LOGGED IN[\s\S]*codex login/);
   assert.match(gaffer(dir, ['smoke', '--model', 'fake-mini']).out, /smoke: ok/);
-  assert.match(gaffer(dir, ['models']).out, /fake-mini/);
+  const noWrite = gaffer(dir, ['smoke'], { FAKE_CODEX: 'nowrite' });
+  assert.equal(noWrite.code, 1, noWrite.out);
+  assert.match(noWrite.out, /smoke: FAILED[\s\S]*sandbox = "unelevated"/);
+  const models = gaffer(dir, ['models']).out;
+  assert.match(models, /fake-mini[\s\S]*fake-max/);
+  assert.doesNotMatch(models, /priority|fake-hidden/);
 });
 
 test('pure helpers', () => {

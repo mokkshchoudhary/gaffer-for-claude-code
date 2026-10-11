@@ -144,7 +144,8 @@ function models() {
     if (Array.isArray(v)) return v.forEach(walk);
     if (v && typeof v === 'object') {
       const id = v.slug ?? v.id ?? v.model;
-      if (typeof id === 'string') found.add(id);
+      // Stop at a model entry: its nested objects (service tiers etc.) carry ids that aren't models.
+      if (typeof id === 'string') { if (v.visibility !== 'hide') found.add(id); return; }
       Object.values(v).forEach(walk);
     }
   };
@@ -154,19 +155,30 @@ function models() {
     : 'models: list unavailable from this Codex version. Ask the user for the model name, or leave it empty to use Codex\'s default.');
 }
 
-function smoke(root, { model, effort = 'low' }) {
+const SANDBOX_HELP = `Codex could not run commands or write files in its sandbox, so real tasks would fail.
+  Windows error "helper_unknown_error: setup refresh had errors" means Codex's elevated Windows sandbox failed.
+  Fix: in ~/.codex/config.toml set   [windows]  sandbox = "unelevated"   then run the smoke test again.`;
+const SANDBOX_BROKEN = /helper_unknown_error|setup refresh had errors/;
+
+function smoke({ model, effort = 'low' }) {
   const codex = findCodex();
   if (!codex) die('codex not found. Run: node gaffer.mjs check');
-  const out = path.join(os.tmpdir(), `gaffer-smoke-${process.pid}.txt`);
-  const args = ['exec', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', '--color', 'never',
+  // Exercise the same write sandbox real tasks use: a read-only smoke can pass while every real run fails to write.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gaffer-smoke-'));
+  const out = path.join(dir, 'answer.txt');
+  const args = ['exec', '--sandbox', 'workspace-write', '--skip-git-repo-check', '--ephemeral', '--color', 'never',
     '-o', out, ...(model ? ['-m', model] : []), '-c', `model_reasoning_effort=${effort}`, '-'];
-  const r = codexSync(codex, args, { input: 'Reply with the single word OK.', timeout: 180_000, cwd: root });
-  let answer = ''; try { answer = fs.readFileSync(out, 'utf8'); fs.rmSync(out); } catch {}
-  if (r.status === 0 && /\bOK\b/i.test(answer)) {
+  const r = codexSync(codex, args, { input: 'Run a shell command that creates a file named ok.txt in the current directory containing OK. Then reply with the single word OK.', timeout: 180_000, cwd: dir });
+  let answer = ''; try { answer = fs.readFileSync(out, 'utf8'); } catch {}
+  const wrote = fs.existsSync(path.join(dir, 'ok.txt'));
+  fs.rmSync(dir, { recursive: true, force: true });
+  if (r.status === 0 && /\bOK\b/i.test(answer) && wrote) {
     console.log(`smoke: ok (model ${model || 'codex default'}, effort ${effort})`);
     return true;
   }
-  console.log(`smoke: FAILED (model ${model || 'codex default'}, effort ${effort})\n${TAIL(`${r.stdout || ''}\n${r.stderr || ''}${r.error ? '\n' + r.error.message : ''}`, 15)}`);
+  const output = `${r.stdout || ''}\n${r.stderr || ''}${r.error ? '\n' + r.error.message : ''}`;
+  const help = (r.status === 0 && !wrote) || SANDBOX_BROKEN.test(output) ? `\n${SANDBOX_HELP}` : '';
+  console.log(`smoke: FAILED (model ${model || 'codex default'}, effort ${effort})\n${TAIL(output, 15)}${help}`);
   process.exitCode = 1;
   return false;
 }
@@ -385,6 +397,7 @@ async function run(root, taskFile) {
     const logSize = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
     const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
     if (logSize < 200 || !last) problems.push('codex produced almost no output, so it probably did nothing');
+    if (logSize && SANDBOX_BROKEN.test(fs.readFileSync(logFile, 'utf8'))) problems.push(SANDBOX_HELP);
     if (task.network) notes.push('ran with full access (network on, no sandbox)');
 
     let changed = [], outside = [], testsAfter = null;
@@ -434,7 +447,7 @@ async function main() {
     case 'status': return status(root);
     case 'check': { const c = check(root); console.log(c.text); process.exitCode = c.ready ? 0 : 1; return; }
     case 'models': return models();
-    case 'smoke': return smoke(root, { model: flags.model, effort: flags.effort });
+    case 'smoke': return smoke({ model: flags.model, effort: flags.effort });
     case 'init': return init(root, flags);
     case 'on': return setEnabled(root, true);
     case 'off': return setEnabled(root, false);
