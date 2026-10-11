@@ -1,0 +1,18 @@
+{
+  "description": "Tells Claude at session start when gaffer manager mode is on for this project",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/gaffer.mjs", "hook"],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

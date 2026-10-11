@@ -1,0 +1,12 @@
+{
+  "name": "gaffer",
+  "description": "gaffer: Claude as the manager, Codex as the worker",
+  "owner": { "name": "Akshay" },
+  "plugins": [
+    {
+      "name": "gaffer",
+      "source": "./plugins/gaffer",
+      "description": "Claude plans and checks. Codex does the work."
+    }
+  ]
+}
