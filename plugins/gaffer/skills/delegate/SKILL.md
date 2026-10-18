@@ -24,7 +24,7 @@ If you're unsure, delegate.
 
 ## How
 1. Write the brief to `.gaffer/tasks/<id>.md`. The format is in [reference/task-template.md](reference/task-template.md). Each task does one thing. A precise brief means fewer wrong guesses. Name the files, the expected behaviour, and the test command that proves it's done.
-2. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/gaffer.mjs" run .gaffer/tasks/<id>.md`. Runs take minutes, so start the command in the background and wait for it to finish. Don't poll the log.
+2. Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/gaffer.mjs" run .gaffer/tasks/<id>.md`. Runs take minutes, so start the command in the background and wait for it to finish. Don't poll the log. The verdict is also saved to `.gaffer/logs/<id>.verdict.txt`.
 3. Read the verdict. It's the truth. Codex's own claims are not.
    - `PASS`: run `git diff --stat`, spot-check the riskiest file, and move on.
    - `FAIL`: read `.gaffer/logs/<id>.last.md`. Open the full log only if that doesn't explain it. Then fix the brief and rerun once, or do the fix yourself.

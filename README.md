@@ -13,7 +13,8 @@ You turn it on once per project. After that you work normally and Claude decides
 - The task file isn't empty. Without this, Codex "succeeds" while doing nothing.
 - Tests run before and after. It fails if tests break, or if the number of tests drops (an agent deleting tests to go green is caught).
 - Any file Codex changes outside the allowed list is flagged.
-- A run with almost no output is flagged as a run that did nothing.
+- A test command that can't start stops the run before Codex spends any tokens.
+- A run that did nothing, stopped before finishing, or hit your Codex usage limit is named as such.
 - Two tasks touching the same files can't run at the same time.
 - Flaky suites (browser, server, timing) can be run 3 times.
 
@@ -28,6 +29,8 @@ problem: test count dropped from 41 to 39
 codex says: Fixed the redirect and cleaned up the tests.
 full log: .gaffer/logs/fix-login-redirect.log | codex summary: .gaffer/logs/fix-login-redirect.last.md
 ```
+
+The verdict is also saved to `.gaffer/logs/<id>.verdict.txt`.
 
 ## Requirements
 
@@ -87,11 +90,13 @@ effort: medium
 What's wrong, where it lives, and what "done" means.
 ```
 
-Optional fields: `id`, `flaky: true`, `network: true` (full access with internet and no sandbox, off by default), `readonly: true` (questions about the code, no edits), `model`, `timeout` (minutes).
+Optional fields: `id`, `flaky: true`, `network: true` (full access with internet and no sandbox, off by default), `sandbox: full` (no sandbox, network unchanged), `readonly: true` (questions about the code, no edits), `model`, `timeout` (minutes, for Codex and for each test run; default 30).
 
-## Known limits in v0.1
+## Known limits in v0.2
 
-- Test counts are read from jest, vitest, pytest, mocha and cargo output. For other runners, gaffer judges on the exit code only and says so in the verdict.
+- On Windows, Codex's default sandbox can't start JS test runners (`spawn EPERM`), so Codex can't run those tests while it works. gaffer's own before/after test runs still happen outside the sandbox. Set `sandbox: full` on tasks where Codex needs to run them itself.
+- If the test suite already fails before Codex runs, every run FAILs, however good the change. Point `test:` at a part of the suite that passes.
+- Test counts are read from jest, vitest, pytest, mocha and cargo output. For other runners, gaffer judges on the exit code only and says so in the verdict. If your `test:` wraps the runner in a script, make sure the runner's summary line still gets printed.
 - Running tasks in parallel is blocked whenever their file patterns might overlap. This is deliberately cautious.
 - Savings depend on your work and models. Measure on your own projects before quoting numbers.
 

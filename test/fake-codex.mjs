@@ -1,5 +1,5 @@
 // Stand-in for the Codex CLI so the runner can be tested without spending tokens.
-// Behaviour is picked with FAKE_CODEX: ok | outside | deletetest | silent | fail | nologin | nowrite
+// Behaviour is picked with FAKE_CODEX: ok | outside | deletetest | silent | fail | nologin | nowrite | research | long | limit | eperm
 import fs from 'node:fs';
 
 const args = process.argv.slice(2);
@@ -29,10 +29,15 @@ if (args[0] === 'exec') {
     else fs.writeFileSync('ok.txt', 'OK');
     fs.writeFileSync(out, 'OK'); process.exit(0);
   }
-  if (mode === 'ok' || mode === 'outside') fs.appendFileSync('src/a.js', '\n// edited by fake codex\n');
+  if (['ok', 'outside', 'limit', 'eperm'].includes(mode)) fs.appendFileSync('src/a.js', '\n// edited by fake codex\n');
   if (mode === 'outside') fs.appendFileSync('README.md', '\nedited\n');
   if (mode === 'deletetest') fs.rmSync('tests/two.test');
-  fs.writeFileSync(out, `Did the thing (${mode}).`);
+  if (mode === 'research') { fs.mkdirSync('.gaffer/research', { recursive: true }); fs.writeFileSync('.gaffer/research/notes.md', '# notes\n'); }
+  if (mode === 'eperm') console.log('Vitest could not start: Error: spawn EPERM');
+  // limit: stopped mid-task by the account's usage limit, without a final message
+  if (mode === 'limit') { console.log("ERROR: You've hit your usage limit. Upgrade or try again at 8:30 PM."); process.exit(1); }
+  const answer = `Did the thing (${mode}, sandbox ${args[args.indexOf('--sandbox') + 1]}).`;
+  fs.writeFileSync(out, mode === 'long' ? Array.from({ length: 80 }, (_, i) => `line ${i + 1}`).join('\n') : answer);
   process.exit(0);
 }
 console.log(`fake codex: unknown args ${args.join(' ')}`);

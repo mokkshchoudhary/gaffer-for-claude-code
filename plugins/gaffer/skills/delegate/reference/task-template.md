@@ -8,7 +8,8 @@ test: npm test -- auth        # run before and after; failures or fewer tests = 
 effort: medium                # optional; overrides the project default (low | medium | high | xhigh)
 flaky: true                   # optional; runs the tests 3 times (browser, server or timing tests)
 network: true                 # optional; full access with internet and no sandbox. Only when the task needs the web
-timeout: 30                   # optional; minutes, default 30
+sandbox: full                 # optional; no sandbox. On Windows, use it when Codex must run tests that start processes (Vitest, Jest, Playwright)
+timeout: 30                   # optional; minutes for Codex and for each test run, default 30
 ---
 What's wrong: after login, users land on /home instead of the page they came from.
 Where: src/auth/redirect.ts sets the target; tests in tests/auth/redirect.test.ts.

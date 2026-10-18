@@ -267,8 +267,9 @@ export function parseTask(raw, file = 'task.md') {
   if (meta.effort && !EFFORTS.includes(meta.effort)) throw new Error(`effort must be one of ${EFFORTS.join(', ')}`);
   const timeout = Number(meta.timeout || 30);
   if (!(timeout > 0)) throw new Error('timeout must be minutes, e.g. timeout: 30');
+  if (meta.sandbox && meta.sandbox !== 'full') throw new Error('sandbox can only be "full" (no sandbox); leave it out for the default workspace sandbox');
   return { id, files, readonly, body, test: typeof meta.test === 'string' ? meta.test : '', effort: meta.effort,
-    model: meta.model, network: meta.network === true, flaky: meta.flaky === true, timeout };
+    model: meta.model, network: meta.network === true, full: meta.sandbox === 'full', flaky: meta.flaky === true, timeout };
 }
 
 const unquote = s => s.replace(/^(['"])(.*)\1$/, '$2');
@@ -290,24 +291,31 @@ export function globsOverlap(a, b) {
   return a.some(x => b.some(y => { const p = staticPrefix(x), q = staticPrefix(y); return p.startsWith(q) || q.startsWith(p); }));
 }
 
+// gaffer's own files. Anything else under .gaffer/ (e.g. research notes a task writes) counts as a change.
+const GAFFER_OWN = /^\.gaffer\/(tasks|logs|locks)\/|^\.gaffer\/config\.json$/;
+
 function snapshot(root) {
-  const out = git(root, ['status', '--porcelain', '-z', '-uall']) ?? '';
-  const parts = out.split('\0');
-  const snap = {};
+  const parts = (git(root, ['status', '--porcelain', '-z', '-uall']) ?? '').split('\0');
+  const files = [];
   for (let i = 0; i < parts.length; i++) {
     const e = parts[i];
     if (e.length < 4) continue;
-    const file = e.slice(3);
+    files.push(e.slice(3));
     if (/[RC]/.test(e.slice(0, 2))) i++; // rename/copy entries carry the old path next
-    const abs = path.join(root, file);
-    try { snap[file] = crypto.createHash('sha1').update(fs.readFileSync(abs)).digest('hex'); } catch { snap[file] = 'deleted'; }
+  }
+  // .gaffer/ is usually gitignored, so git status can't see task output written there.
+  files.push(...(git(root, ['ls-files', '-o', '-i', '--exclude-standard', '-z', '--', '.gaffer']) ?? '').split('\0').filter(Boolean));
+  const snap = {};
+  for (const file of files) {
+    if (GAFFER_OWN.test(file)) continue;
+    try { snap[file] = crypto.createHash('sha1').update(fs.readFileSync(path.join(root, file))).digest('hex'); } catch { snap[file] = 'deleted'; }
   }
   return snap;
 }
 
 function changedSince(before, after) {
   const all = new Set([...Object.keys(before), ...Object.keys(after)]);
-  return [...all].filter(f => before[f] !== after[f] && !f.startsWith('.gaffer/')).sort();
+  return [...all].filter(f => before[f] !== after[f]).sort();
 }
 
 export function countTests(output) {
@@ -321,18 +329,30 @@ export function countTests(output) {
   return passed + failed > 0 ? { passed, failed, total: passed + failed } : null;
 }
 
-function runTests(cmd, root, times) {
+// Failure lines first (they often scroll away under server logs), then the last lines.
+export function failureTail(out) {
+  const lines = out.trim().split(/\r?\n/).map(l => l.slice(0, 300));
+  const hits = lines.filter(l => /fail|error|✘|✗|×|expected|assert/i.test(l)).slice(-15);
+  return [...new Set([...hits, ...lines.slice(-10)])].join('\n');
+}
+
+const TEST_SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
+
+function runTests(cmd, root, times, minutes) {
   let last = null, failedRuns = 0;
   for (let i = 0; i < times; i++) {
-    const r = spawnSync(cmd, { cwd: root, shell: true, encoding: 'utf8', maxBuffer: 64 << 20, timeout: 20 * 60_000 });
+    const r = spawnSync(cmd, { cwd: root, shell: true, encoding: 'utf8', maxBuffer: 64 << 20, timeout: minutes * 60_000 });
     const out = `${r.stdout || ''}\n${r.stderr || ''}`;
     if (r.status !== 0) failedRuns++;
-    last = { code: r.status, counts: countTests(out), tail: TAIL(out, 3) };
+    // 127 (sh) and 9009 (cmd.exe) mean the shell couldn't find the command.
+    const missing = r.status === 127 || r.status === 9009 ? TAIL(out, 1) || `exit ${r.status}`
+      : r.status ? out.match(/^.*(?:is not recognized as an internal or external command|command not found).*$/m)?.[0] : null;
+    last = { code: r.status, counts: countTests(out), tail: failureTail(out), timedOut: r.error?.code === 'ETIMEDOUT', missing };
   }
   return { ...last, failedRuns, times };
 }
 
-const fmtCounts = t => !t ? 'not run' : t.counts ? `${t.counts.passed} passed${t.counts.failed ? `, ${t.counts.failed} failed` : ''}` : `exit ${t.code} (count unknown)`;
+const fmtCounts = t => !t ? 'not run' : t.timedOut ? 'timed out' : t.counts ? `${t.counts.passed} passed${t.counts.failed ? `, ${t.counts.failed} failed` : ''}` : `exit ${t.code} (count unknown)`;
 
 function acquireLock(root, task) {
   const dir = path.join(gafferDir(root), 'locks');
@@ -354,7 +374,8 @@ function buildPrompt(task) {
   const rules = task.readonly
     ? ['Do not create, edit or delete any files.', 'Put your answer in your final message: concise, with file paths and line numbers where useful.']
     : [`Only create or edit files matching: ${task.files.join(', ')}`, 'Do not commit, push, or create branches.',
-       'Do not install or upgrade dependencies.', 'Do not start servers or other long-running processes.',
+       'Do not install or upgrade dependencies.',
+       'Do not leave servers or other long-running processes running when you finish. Servers a test runner starts and stops itself (e.g. an E2E suite) are fine.',
        'Never delete, skip, or weaken tests to make them pass.', 'Finish with a short plain summary of what you changed.'];
   return `${task.body}\n\n---\nRules for this run (set by gaffer, not negotiable):\n${rules.map(r => `- ${r}`).join('\n')}\n`;
 }
@@ -378,12 +399,19 @@ async function run(root, taskFile) {
     fs.mkdirSync(logs, { recursive: true });
     const logFile = path.join(logs, `${task.id}.log`);
     const lastFile = path.join(logs, `${task.id}.last.md`);
+    const verdictFile = path.join(logs, `${task.id}.verdict.txt`);
     fs.rmSync(lastFile, { force: true });
+    fs.rmSync(verdictFile, { force: true });
 
+    const testsBefore = task.test && !task.readonly ? runTests(task.test, root, 1, task.timeout) : null;
+    if (testsBefore?.missing) {
+      if (lockFile) fs.rmSync(lockFile, { force: true });
+      die(`test command could not start, so Codex was not run: ${testsBefore.missing.trim()}\nTests run in ${TEST_SHELL}. Fix the test: line and rerun (a pnpm or yarn project without a global install can use "corepack pnpm ...").`);
+    }
+    // Snapshot after the baseline run, so files the test command itself writes aren't blamed on Codex.
     const before = task.readonly ? null : snapshot(root);
-    const testsBefore = task.test && !task.readonly ? runTests(task.test, root, 1) : null;
 
-    const sandbox = task.readonly ? 'read-only' : task.network ? 'danger-full-access' : 'workspace-write';
+    const sandbox = task.readonly ? 'read-only' : task.network || task.full ? 'danger-full-access' : 'workspace-write';
     const args = ['exec', '--sandbox', sandbox, '--color', 'never', '-o', lastFile,
       ...(model ? ['-m', model] : []), '-c', `model_reasoning_effort=${effort}`, '-'];
     const t0 = Date.now();
@@ -394,11 +422,21 @@ async function run(root, taskFile) {
     if (res.error) problems.push(`codex failed to start: ${res.error}`);
     else if (res.timedOut) problems.push(`codex timed out after ${task.timeout} min`);
     else if (res.code !== 0) problems.push(`codex exited with code ${res.code}`);
-    const logSize = fs.existsSync(logFile) ? fs.statSync(logFile).size : 0;
+    const logText = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
     const last = fs.existsSync(lastFile) ? fs.readFileSync(lastFile, 'utf8').trim() : '';
-    if (logSize < 200 || !last) problems.push('codex produced almost no output, so it probably did nothing');
-    if (logSize && SANDBOX_BROKEN.test(fs.readFileSync(logFile, 'utf8'))) problems.push(SANDBOX_HELP);
+    const finished = !res.error && !res.timedOut && res.code === 0 && !!last;
+    // Only the log's end: earlier parts quote project files, which may mention limits for their own reasons.
+    const limitHit = !finished && /usage limit/i.test(TAIL(logText, 30));
+    if (limitHit) {
+      const when = TAIL(logText, 30).match(/try again at ([^.\n]+)/i)?.[1];
+      problems.push(`Codex hit its usage limit${when ? ` (resets ${when.trim()})` : ''}; edits made so far are left in place`);
+    } else if (logText.length < 200) problems.push('codex produced almost no output, so it probably did nothing');
+    else if (!last) problems.push('codex stopped before writing its final message, so any edits are partial');
+    if (SANDBOX_BROKEN.test(logText)) problems.push(SANDBOX_HELP);
+    if (!task.readonly && sandbox === 'workspace-write' && /spawn EPERM/.test(logText))
+      notes.push('Codex could not start processes inside its sandbox (spawn EPERM), so it probably could not run tests while working. On Windows, set sandbox: full for tasks whose tests start processes.');
     if (task.network) notes.push('ran with full access (network on, no sandbox)');
+    else if (task.full && !task.readonly) notes.push('ran with full access (no sandbox)');
 
     let changed = [], outside = [], testsAfter = null;
     if (!task.readonly) {
@@ -408,12 +446,15 @@ async function run(root, taskFile) {
       if (!changed.length) problems.push('no files changed');
       if (outside.length) problems.push(`changed files outside the allowed list: ${outside.join(', ')}`);
       if (task.test) {
-        testsAfter = runTests(task.test, root, task.flaky ? 3 : 1);
-        if (testsAfter.failedRuns) problems.push(`tests failing after the change (${testsAfter.failedRuns}/${testsAfter.times} runs)`);
+        // Repeating a flaky suite only makes sense on finished work.
+        testsAfter = runTests(task.test, root, task.flaky && finished ? 3 : 1, task.timeout);
+        if (testsAfter.timedOut) problems.push(`test command timed out after ${task.timeout} min (raise timeout: in the task if the suite is slow)`);
+        else if (testsAfter.failedRuns) problems.push(`tests failing after the change (${testsAfter.failedRuns}/${testsAfter.times} runs)`);
         const b = testsBefore.counts?.total, a = testsAfter.counts?.total;
         if (b != null && a != null && a < b) problems.push(`test count dropped from ${b} to ${a}`);
-        if (testsBefore.code !== 0) notes.push('tests were already failing before Codex ran');
-        if (!testsAfter.counts) notes.push('could not read a test count, judged on exit code only');
+        if (testsBefore.timedOut) notes.push(`the baseline test run timed out after ${task.timeout} min`);
+        else if (testsBefore.code !== 0) notes.push('tests were already failing before Codex ran');
+        if (!testsAfter.counts && !testsAfter.timedOut) notes.push('could not read a test count, judged on exit code only');
       } else notes.push('no test command given, nothing was verified by tests');
     }
 
@@ -426,10 +467,15 @@ async function run(root, taskFile) {
     }
     problems.forEach(p => out.push(`problem: ${p}`));
     notes.forEach(n => out.push(`note: ${n}`));
-    if (task.readonly) out.push(`answer:\n${last.split(/\r?\n/).slice(0, 60).join('\n') || '(none)'}`);
-    else out.push(`codex says: ${last.split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ').slice(0, 300) || '(nothing)'}`);
-    if (!pass && testsAfter?.failedRuns) out.push(`test output tail:\n${testsAfter.tail}`);
+    if (task.readonly) {
+      const lines = last ? last.split(/\r?\n/) : [];
+      out.push(`answer:\n${lines.slice(0, 60).join('\n') || '(none)'}`);
+      if (lines.length > 60) out.push(`(+${lines.length - 60} more lines in ${path.relative(root, lastFile)})`);
+    } else out.push(`codex says: ${last.split(/\r?\n/).filter(Boolean).slice(0, 3).join(' / ').slice(0, 300) || '(nothing)'}`);
+    if (!pass && testsAfter?.failedRuns && !testsAfter.timedOut) out.push(`test output tail:\n${testsAfter.tail}`);
     out.push(`full log: ${path.relative(root, logFile)} | codex summary: ${path.relative(root, lastFile)}`);
+    // Also on disk, so a run started in the background or detached doesn't lose its verdict.
+    fs.writeFileSync(verdictFile, out.join('\n') + '\n');
     console.log(out.join('\n'));
     process.exitCode = pass ? 0 : 1;
   } finally {

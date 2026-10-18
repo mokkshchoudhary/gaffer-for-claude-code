@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseTask, globToRegex, globsOverlap, countTests } from '../plugins/gaffer/scripts/gaffer.mjs';
+import { parseTask, globToRegex, globsOverlap, countTests, failureTail } from '../plugins/gaffer/scripts/gaffer.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const GAFFER = path.join(here, '..', 'plugins', 'gaffer', 'scripts', 'gaffer.mjs');
@@ -50,6 +50,60 @@ test('PASS when Codex edits only allowed files and tests hold', () => {
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /STATUS: PASS/);
   assert.match(r.out, /tests: 2 passed -> 2 passed/);
+  assert.match(fs.readFileSync(path.join(dir, '.gaffer', 'logs', 'ok.verdict.txt'), 'utf8'), /STATUS: PASS/);
+});
+
+test('counts task output under a gitignored .gaffer/ as a change', () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.gaffer/\n');
+  const r = gaffer(dir, ['run', writeTask(dir, 'research', 'files: [.gaffer/research/**]')], { FAKE_CODEX: 'research' });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /changed: \.gaffer\/research\/notes\.md\n/);
+});
+
+test('files written by the baseline test run are not blamed on Codex', () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, 'porttests.js'), "require('fs').writeFileSync('port.tmp', String(Math.random())); require('./runtests.js');\n");
+  const r = gaffer(dir, ['run', writeTask(dir, 'port', 'files: [src/**]\ntest: node porttests.js')]);
+  assert.equal(r.code, 0, r.out);
+  assert.doesNotMatch(r.out, /port\.tmp/);
+});
+
+test('usage limit is named, and partial edits are not called "did nothing"', () => {
+  const dir = makeRepo();
+  const r = gaffer(dir, ['run', writeTask(dir, 'limit', TASK)], { FAKE_CODEX: 'limit' });
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /usage limit \(resets 8:30 PM\)/);
+  assert.match(r.out, /changed: src\/a\.js/);
+  assert.doesNotMatch(r.out, /did nothing/);
+});
+
+test('refuses to run Codex when the test command cannot start', () => {
+  const dir = makeRepo();
+  const r = gaffer(dir, ['run', writeTask(dir, 'nocmd', 'files: [src/**]\ntest: gaffer-no-such-command-xyz')]);
+  assert.equal(r.code, 2, r.out);
+  assert.match(r.out, /test command could not start, so Codex was not run/);
+  assert.ok(!fs.existsSync(path.join(dir, '.gaffer', 'logs', 'nocmd.log')));
+  assert.deepEqual(fs.readdirSync(path.join(dir, '.gaffer', 'locks')), []);
+});
+
+test('a test command that runs too long is reported as a timeout, not failing tests', () => {
+  const dir = makeRepo();
+  fs.writeFileSync(path.join(dir, 'slow.js'), 'setTimeout(() => {}, 6000);\n');
+  const r = gaffer(dir, ['run', writeTask(dir, 'slow', 'files: [src/**]\ntest: node slow.js\ntimeout: 0.04')]);
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.out, /test command timed out after 0\.04 min/);
+  assert.doesNotMatch(r.out, /tests failing/);
+});
+
+test('sandbox: full runs without a sandbox; spawn EPERM inside the sandbox is noted', () => {
+  const dir = makeRepo();
+  const full = gaffer(dir, ['run', writeTask(dir, 'full', 'files: [src/**]\nsandbox: full')]);
+  assert.match(full.out, /sandbox danger-full-access/);
+  assert.match(full.out, /ran with full access \(no sandbox\)/);
+  const eperm = gaffer(dir, ['run', writeTask(dir, 'eperm', TASK)], { FAKE_CODEX: 'eperm' });
+  assert.equal(eperm.code, 0, eperm.out);
+  assert.match(eperm.out, /note: Codex could not start processes inside its sandbox \(spawn EPERM\)/);
 });
 
 test('FAIL when Codex edits a file outside the allowed list', () => {
@@ -96,6 +150,8 @@ test('readonly task returns the answer and needs no files list', () => {
   const r = gaffer(dir, ['run', writeTask(dir, 'look', 'readonly: true\neffort: low', 'Find where the constant a is defined and report the file.')]);
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /answer:\nDid the thing/);
+  const long = gaffer(dir, ['run', writeTask(dir, 'long', 'readonly: true', 'Describe every module in this repo in detail.')], { FAKE_CODEX: 'long' });
+  assert.match(long.out, /line 60\n\(\+20 more lines in \.gaffer[\\/]logs[\\/]long\.last\.md\)/);
 });
 
 test('init saves config, pins Claude model per project, gitignores; hook speaks only when on', () => {
@@ -140,9 +196,12 @@ test('pure helpers', () => {
   const t = parseTask('---\nid: x\nfiles:\n  - src/**\n  - "lib/*.js"\nflaky: true\n---\nDo a reasonably described job here please.');
   assert.deepEqual(t.files, ['src/**', 'lib/*.js']);
   assert.equal(t.flaky, true);
-  // The shipped template must parse as written, comments and all.
+  assert.throws(() => parseTask('---\nfiles: [a]\nsandbox: off\n---\nDo a reasonably described job here please.'), /sandbox/);
+  const tail = failureTail(['FAIL tests/x.test.ts > returns to page', ...Array.from({ length: 30 }, (_, i) => `[WebServer] log ${i}`)].join('\n'));
+  assert.match(tail, /^FAIL tests\/x\.test\.ts[\s\S]*\[WebServer\] log 29$/);
+  // The shipped template must parse as written, comments and all. \r?: Windows checkouts may use CRLF.
   const tpl = fs.readFileSync(path.join(here, '..', 'plugins', 'gaffer', 'skills', 'delegate', 'reference', 'task-template.md'), 'utf8');
-  const fromTpl = parseTask(tpl.match(/```markdown\n([\s\S]*?)```/)[1]);
+  const fromTpl = parseTask(tpl.match(/```markdown\r?\n([\s\S]*?)```/)[1]);
   assert.equal(fromTpl.id, 'fix-login-redirect');
   assert.deepEqual(fromTpl.files, ['src/auth/**', 'tests/auth/**']);
   assert.equal(fromTpl.test, 'npm test -- auth');
