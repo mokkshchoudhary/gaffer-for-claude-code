@@ -96,7 +96,7 @@ Optional fields: `id`, `flaky: true`, `network: true` (full access with internet
 
 - On Windows, Codex's default sandbox can't start JS test runners (`spawn EPERM`), so Codex can't run those tests while it works. gaffer's own before/after test runs still happen outside the sandbox. Set `sandbox: full` on tasks where Codex needs to run them itself.
 - If the test suite already fails before Codex runs, every run FAILs, however good the change. Point `test:` at a part of the suite that passes.
-- Test counts are read from jest, vitest, pytest, mocha and cargo output. For other runners, gaffer judges on the exit code only and says so in the verdict. If your `test:` wraps the runner in a script, make sure the runner's summary line still gets printed.
+- Test counts are read from jest, vitest, pytest, mocha, cargo and Node's built-in test runner output. For other runners, gaffer judges on the exit code only and says so in the verdict. If your `test:` wraps the runner in a script, make sure the runner's summary line still gets printed.
 - Running tasks in parallel is blocked whenever their file patterns might overlap. This is deliberately cautious.
 - Savings depend on your work and models. Measure on your own projects before quoting numbers.
 

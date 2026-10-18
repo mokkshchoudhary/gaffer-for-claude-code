@@ -319,6 +319,10 @@ function changedSince(before, after) {
 }
 
 export function countTests(output) {
+  // node:test ends with "ℹ pass 9" / "ℹ fail 1" (spec reporter) or "# pass 9" / "# fail 1" (TAP).
+  const nodeSum = w => [...output.matchAll(new RegExp(`^[ℹ#] ${w} (\\d+)\\s*$`, 'gm'))].reduce((n, m) => n + Number(m[1]), 0);
+  const np = nodeSum('pass'), nf = nodeSum('fail');
+  if (np + nf > 0) return { passed: np, failed: nf, total: np + nf };
   // Prefer a jest/vitest "Tests" summary line; skip "Test Suites"/"Test Files" lines that would double count.
   const lines = output.split(/\r?\n/);
   const summary = lines.filter(l => /^\s*Tests?\b:?\s/.test(l) && !/Test (Suites|Files)/.test(l));

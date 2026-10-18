@@ -192,6 +192,8 @@ test('pure helpers', () => {
   assert.deepEqual(countTests('===== 3 passed, 1 failed in 0.2s ====='), { passed: 3, failed: 1, total: 4 });
   assert.deepEqual(countTests('  12 passing (40ms)\n  2 failing'), { passed: 12, failed: 2, total: 14 });
   assert.equal(countTests('ok  example.com/pkg 0.01s'), null);
+  assert.deepEqual(countTests('ℹ tests 10\nℹ suites 0\nℹ pass 9\nℹ fail 1\nℹ cancelled 0'), { passed: 9, failed: 1, total: 10 });
+  assert.deepEqual(countTests('ok 3 - c\n# tests 3\r\n# pass 3\r\n# fail 0\r\n'), { passed: 3, failed: 0, total: 3 });
   assert.throws(() => parseTask('no frontmatter'), /frontmatter/);
   const t = parseTask('---\nid: x\nfiles:\n  - src/**\n  - "lib/*.js"\nflaky: true\n---\nDo a reasonably described job here please.');
   assert.deepEqual(t.files, ['src/**', 'lib/*.js']);

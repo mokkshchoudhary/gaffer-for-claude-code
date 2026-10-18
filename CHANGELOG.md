@@ -12,6 +12,7 @@ Verdicts you can trust more. Every fix below comes from real-world runs where th
 - Codex may now run test suites that start and stop their own servers (E2E). The rule is now "don't leave servers running".
 - New `sandbox: full` task option: no sandbox, without turning on network. The verdict notes when Codex hit `spawn EPERM` inside the sandbox.
 - Every verdict is also saved to `.gaffer/logs/<id>.verdict.txt`.
+- Test counts are now read from Node's built-in test runner (`node --test`), so the test-count drop check works for those projects too.
 - CI fixed on Windows (a test didn't handle CRLF checkouts).
 
 ## 0.1.1
