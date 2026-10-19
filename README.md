@@ -107,7 +107,9 @@ Optional fields: `id`, `flaky: true`, `network: true` (full access with internet
 
 ## Feedback
 
-Open an issue using the bug template. Include your OS, Claude Code and Codex versions, and the verdict output.
+[Open a bug report](https://github.com/mokkshchoudhary/gaffer-for-claude-code/issues/new?template=bug.md). Include your OS, Claude Code and Codex versions, and the verdict output.
+
+Found a security problem? Don't open a public issue. See [SECURITY.md](SECURITY.md).
 
 ## Development
 
