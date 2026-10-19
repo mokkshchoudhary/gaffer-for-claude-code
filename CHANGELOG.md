@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.2.1
+- When a test run or Codex hits the time limit, everything it started is now stopped too. Before, a stuck test runner or server could keep running after the verdict, mostly on Windows.
+
 ## 0.2.0
 Verdicts you can trust more. Every fix below comes from real-world runs where the verdict was wrong or unclear.
 - Files a task writes under `.gaffer/` (for example research notes) now count as changes, even when `.gaffer/` is gitignored. Before, such tasks always failed with "no files changed".

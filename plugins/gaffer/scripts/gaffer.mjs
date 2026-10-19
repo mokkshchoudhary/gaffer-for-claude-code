@@ -99,11 +99,20 @@ function codexRun(codex, args, input, { cwd, logFile, timeoutMs }) {
     const fd = fs.openSync(logFile, 'w');
     const child = spawn(codex.cmd, [...codex.pre, ...args], { cwd, stdio: ['pipe', fd, fd], shell: codex.shell });
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; killTree(child.pid); }, timeoutMs);
     child.on('error', err => { clearTimeout(timer); fs.closeSync(fd); resolve({ code: -1, timedOut, error: err.message }); });
     child.on('close', code => { clearTimeout(timer); fs.closeSync(fd); resolve({ code, timedOut }); });
     child.stdin.end(input);
   });
+}
+
+// Killing only the shell (or Codex's launcher) would leave what it started running: a stuck test runner, a server.
+function killTree(pid) {
+  if (process.platform === 'win32') { spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' }); return; }
+  // shortcut: without pgrep only the process itself is killed; every common macOS and Linux install has it
+  const kids = (spawnSync('pgrep', ['-P', String(pid)], { encoding: 'utf8' }).stdout || '').split('\n').filter(Boolean);
+  try { process.kill(pid, 'SIGKILL'); } catch {}
+  kids.forEach(k => killTree(Number(k)));
 }
 
 const INSTALL_HELP = `How to fix:
@@ -342,16 +351,30 @@ export function failureTail(out) {
 
 const TEST_SHELL = process.platform === 'win32' ? 'cmd.exe' : '/bin/sh';
 
-function runTests(cmd, root, times, minutes) {
+function runTestsOnce(cmd, root, minutes) {
+  return new Promise(resolve => {
+    const child = spawn(cmd, { cwd: root, shell: true });
+    let stdout = '', stderr = '', timedOut = false;
+    child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+    const done = status => { clearTimeout(timer); resolve({ status, out: `${stdout}\n${stderr}`, timedOut }); };
+    // Resolve right after the kill: a process that escaped it could hold the pipes open forever.
+    const timer = setTimeout(() => { timedOut = true; killTree(child.pid); done(null); }, minutes * 60_000);
+    child.on('error', e => { stderr += e.message; done(null); });
+    child.on('close', done);
+  });
+}
+
+async function runTests(cmd, root, times, minutes) {
   let last = null, failedRuns = 0;
   for (let i = 0; i < times; i++) {
-    const r = spawnSync(cmd, { cwd: root, shell: true, encoding: 'utf8', maxBuffer: 64 << 20, timeout: minutes * 60_000 });
-    const out = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const r = await runTestsOnce(cmd, root, minutes);
+    const out = r.out;
     if (r.status !== 0) failedRuns++;
     // 127 (sh) and 9009 (cmd.exe) mean the shell couldn't find the command.
     const missing = r.status === 127 || r.status === 9009 ? TAIL(out, 1) || `exit ${r.status}`
       : r.status ? out.match(/^.*(?:is not recognized as an internal or external command|command not found).*$/m)?.[0] : null;
-    last = { code: r.status, counts: countTests(out), tail: failureTail(out), timedOut: r.error?.code === 'ETIMEDOUT', missing };
+    last = { code: r.status, counts: countTests(out), tail: failureTail(out), timedOut: r.timedOut, missing };
   }
   return { ...last, failedRuns, times };
 }
@@ -407,7 +430,7 @@ async function run(root, taskFile) {
     fs.rmSync(lastFile, { force: true });
     fs.rmSync(verdictFile, { force: true });
 
-    const testsBefore = task.test && !task.readonly ? runTests(task.test, root, 1, task.timeout) : null;
+    const testsBefore = task.test && !task.readonly ? await runTests(task.test, root, 1, task.timeout) : null;
     if (testsBefore?.missing) {
       if (lockFile) fs.rmSync(lockFile, { force: true });
       die(`test command could not start, so Codex was not run: ${testsBefore.missing.trim()}\nTests run in ${TEST_SHELL}. Fix the test: line and rerun (a pnpm or yarn project without a global install can use "corepack pnpm ...").`);
@@ -451,7 +474,7 @@ async function run(root, taskFile) {
       if (outside.length) problems.push(`changed files outside the allowed list: ${outside.join(', ')}`);
       if (task.test) {
         // Repeating a flaky suite only makes sense on finished work.
-        testsAfter = runTests(task.test, root, task.flaky && finished ? 3 : 1, task.timeout);
+        testsAfter = await runTests(task.test, root, task.flaky && finished ? 3 : 1, task.timeout);
         if (testsAfter.timedOut) problems.push(`test command timed out after ${task.timeout} min (raise timeout: in the task if the suite is slow)`);
         else if (testsAfter.failedRuns) problems.push(`tests failing after the change (${testsAfter.failedRuns}/${testsAfter.times} runs)`);
         const b = testsBefore.counts?.total, a = testsAfter.counts?.total;
