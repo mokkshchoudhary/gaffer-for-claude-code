@@ -87,13 +87,17 @@ test('refuses to run Codex when the test command cannot start', () => {
   assert.deepEqual(fs.readdirSync(path.join(dir, '.gaffer', 'locks')), []);
 });
 
-test('a test command that runs too long is reported as a timeout, not failing tests', () => {
+test('a test command that runs too long is reported as a timeout, and nothing it started survives', async () => {
   const dir = makeRepo();
-  fs.writeFileSync(path.join(dir, 'slow.js'), 'setTimeout(() => {}, 6000);\n');
-  const r = gaffer(dir, ['run', writeTask(dir, 'slow', 'files: [src/**]\ntest: node slow.js\ntimeout: 0.04')]);
+  // Still running at the 2.4 s timeout; writes alive.txt only if it outlives it.
+  fs.writeFileSync(path.join(dir, 'slow.js'), "setTimeout(() => require('fs').writeFileSync('alive.txt', ''), 4000);\n");
+  // "&& echo" makes the shell start node as a child instead of replacing itself with it.
+  const r = gaffer(dir, ['run', writeTask(dir, 'slow', 'files: [src/**]\ntest: node slow.js && echo done\ntimeout: 0.04')]);
   assert.equal(r.code, 1, r.out);
   assert.match(r.out, /test command timed out after 0\.04 min/);
-  assert.doesNotMatch(r.out, /tests failing/);
+  assert.doesNotMatch(r.out, /tests failing|alive/);
+  await new Promise(res => setTimeout(res, 2500));
+  assert.ok(!fs.existsSync(path.join(dir, 'alive.txt')), 'a timed-out test process kept running');
 });
 
 test('sandbox: full runs without a sandbox; spawn EPERM inside the sandbox is noted', () => {
